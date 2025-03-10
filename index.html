@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>High-Fidelity 3D Car Driving Simulator</title>
+    <!-- Include Three.js and Cannon.js from CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <!-- Optional: include post-processing and loader scripts if needed -->
+    <style>
+      /* Basic CSS Reset & Fullscreen Canvas */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        height: 100%;
+        background: #000;
+      }
+      #simulatorCanvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      /* Dashboard overlay styling */
+      #dashboard {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        color: #0f0;
+        font-family: monospace;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 10px;
+        border-radius: 5px;
+      }
+      /* Additional UI elements (speedometer, tachometer, etc.) */
+      .dashboard-item {
+        margin-bottom: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The rendering canvas -->
+    <canvas id="simulatorCanvas"></canvas>
+    <!-- Dashboard overlay -->
+    <div id="dashboard">
+      <div class="dashboard-item" id="speedometer">Speed: 0 km/h</div>
+      <div class="dashboard-item" id="tachometer">RPM: 0</div>
+      <div class="dashboard-item" id="fuelGauge">Fuel: 100%</div>
+      <!-- More dashboard items as needed -->
+    </div>
+
+    <!-- Main Simulator Script -->
+    <script type="module">
+      // === Global Variables and Setup ===
+
+      // Renderer, Scene, Camera
+      const canvas = document.getElementById('simulatorCanvas');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87ceeb); // default sky-blue (will change for day/night)
+
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        2000
+      );
+      camera.position.set(0, 5, -10);
+      camera.lookAt(0, 0, 0);
+
+      // === Physics World (Cannon.js) ===
+
+      const world = new CANNON.World();
+      world.gravity.set(0, -9.82, 0); // gravity in m/s²
+
+      // Broadphase and Solver settings (tweak for performance)
+      world.broadphase = new CANNON.NaiveBroadphase();
+      world.solver.iterations = 10;
+
+      // === Environment Setup ===
+
+      // Ground (Three.js Mesh and Cannon.js Body)
+      const groundMaterial = new THREE.MeshStandardMaterial({
+        color: 0x228b22,
+        roughness: 1,
+      });
+      const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
+      const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.receiveShadow = true;
+      scene.add(groundMesh);
+
+      const groundBody = new CANNON.Body({
+        mass: 0, // static body
+        shape: new CANNON.Plane(),
+      });
+      groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+      world.addBody(groundBody);
+
+      // Placeholder for environment generation (mountain pass, urban highway, etc.)
+      // For each environment, you could load glTF models, add procedural terrain, vegetation, and weather effects.
+
+      // === Dynamic Lighting & Day/Night Cycle ===
+
+      // Directional Light representing the sun
+      const sunLight = new THREE.DirectionalLight(0xffffff, 1);
+      sunLight.position.set(50, 100, 50);
+      sunLight.castShadow = true;
+      scene.add(sunLight);
+
+      // Ambient light for soft illumination
+      const ambientLight = new THREE.AmbientLight(0x404040);
+      scene.add(ambientLight);
+
+      let timeOfDay = 0; // 0 to 24 (hours)
+      function updateDayNightCycle(deltaTime) {
+        // Increase timeOfDay; wrap around 24 hours
+        timeOfDay += deltaTime * 0.01; // speed factor
+        if (timeOfDay > 24) timeOfDay -= 24;
+
+        // Compute sun intensity and color based on timeOfDay
+        // (This is a simple placeholder: more realistic curves and skybox transitions can be implemented.)
+        const intensity =
+          Math.max(Math.cos((timeOfDay / 24) * Math.PI * 2), 0.2);
+        sunLight.intensity = intensity;
+        ambientLight.intensity = intensity * 0.5;
+
+        // Change scene background to mimic day/night
+        if (intensity < 0.3) {
+          scene.background.set(0x000022);
+        } else {
+          scene.background.set(0x87ceeb);
+        }
+      }
+
+      // === Car Physics and 3D Model ===
+
+      // Car properties (placeholder values)
+      const carDimensions = { width: 2, height: 1, length: 4 };
+      let currentCarIndex = 0; // 0 to 4 for five supercars
+      const carColors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
+
+      // Create a simple box for the car (replace with detailed glTF models later)
+      const carMaterial = new THREE.MeshStandardMaterial({
+        color: carColors[currentCarIndex],
+        metalness: 0.8,
+        roughness: 0.2,
+      });
+      const carGeometry = new THREE.BoxGeometry(
+        carDimensions.width,
+        carDimensions.height,
+        carDimensions.length
+      );
+      const carMesh = new THREE.Mesh(carGeometry, carMaterial);
+      carMesh.castShadow = true;
+      carMesh.receiveShadow = true;
+      scene.add(carMesh);
+
+      // Car physics body (using a box shape; later replace with compound shapes for wheels/suspension)
+      const carShape = new CANNON.Box(
+        new CANNON.Vec3(
+          carDimensions.width / 2,
+          carDimensions.height / 2,
+          carDimensions.length / 2
+        )
+      );
+      const carBody = new CANNON.Body({ mass: 1500 });
+      carBody.addShape(carShape);
+      carBody.position.set(0, 5, 0);
+      world.addBody(carBody);
+
+      // --- Advanced car physics placeholders ---
+      // Implement tire friction, suspension, engine power curves, aerodynamic drag, tire deformation, etc.
+      // You could use existing physics libraries or write custom constraints.
+
+      // Dynamic force field at terrain boundaries (placeholder)
+      function applyBoundaryForce() {
+        const boundary = 900;
+        const pos = carBody.position;
+        if (Math.abs(pos.x) > boundary || Math.abs(pos.z) > boundary) {
+          const forceMagnitude = 50;
+          const force = new CANNON.Vec3(-pos.x, 0, -pos.z).scale(forceMagnitude);
+          carBody.applyForce(force, carBody.position);
+          // Optionally, add visual distortion effects using shaders.
+        }
+      }
+
+      // === Input Handling for Car Controls and Supercar Selection ===
+
+      const keysPressed = {};
+      window.addEventListener('keydown', (event) => {
+        keysPressed[event.key.toLowerCase()] = true;
+
+        // Switch supercars with keys 1-5
+        if (['1', '2', '3', '4', '5'].includes(event.key)) {
+          currentCarIndex = parseInt(event.key) - 1;
+          // For now, change the car's color as a placeholder for a new model/customization
+          carMesh.material.color.setHex(carColors[currentCarIndex]);
+          console.log('Switched to car', currentCarIndex + 1);
+        }
+      });
+
+      window.addEventListener('keyup', (event) => {
+        keysPressed[event.key.toLowerCase()] = false;
+      });
+
+      // --- Basic Car Control Logic ---
+      function updateCarControls(deltaTime) {
+        const engineForce = 3000;
+        const brakeForce = 1500;
+        const steerAngle = 0.04;
+
+        // Forward/Backward movement
+        if (keysPressed['w'] || keysPressed['arrowup']) {
+          // Apply forward force in the direction the car is facing
+          const forward = new CANNON.Vec3(
+            -Math.sin(carBody.quaternion.toEuler().y),
+            0,
+            -Math.cos(carBody.quaternion.toEuler().y)
+          );
+          forward.scale(engineForce * deltaTime, forward);
+          carBody.applyLocalForce(forward, new CANNON.Vec3(0, 0, 0));
+        }
+        if (keysPressed['s'] || keysPressed['arrowdown']) {
+          // Apply braking force (or reverse force)
+          const backward = new CANNON.Vec3(
+            Math.sin(carBody.quaternion.toEuler().y),
+            0,
+            Math.cos(carBody.quaternion.toEuler().y)
+          );
+          backward.scale(brakeForce * deltaTime, backward);
+          carBody.applyLocalForce(backward, new CANNON.Vec3(0, 0, 0));
+        }
+        // Steering (rotate the car)
+        if (keysPressed['a'] || keysPressed['arrowleft']) {
+          carBody.angularVelocity.y += steerAngle;
+        }
+        if (keysPressed['d'] || keysPressed['arrowright']) {
+          carBody.angularVelocity.y -= steerAngle;
+        }
+      }
+
+      // === Animation and Simulation Loop ===
+
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+
+        const deltaTime = clock.getDelta();
+
+        // Update day/night cycle
+        updateDayNightCycle(deltaTime);
+
+        // Update car controls
+        updateCarControls(deltaTime);
+
+        // Step the physics world
+        world.step(1 / 60, deltaTime);
+
+        // Apply boundary force if needed
+        applyBoundaryForce();
+
+        // Sync Three.js car mesh with Cannon.js car body
+        carMesh.position.copy(carBody.position);
+        carMesh.quaternion.copy(carBody.quaternion);
+
+        // Update camera (for first-person/third-person view switch, implement a toggle)
+        camera.position.lerp(
+          new THREE.Vector3(
+            carMesh.position.x,
+            carMesh.position.y + 5,
+            carMesh.position.z - 10
+          ),
+          0.05
+        );
+        camera.lookAt(carMesh.position);
+
+        // Update dashboard UI
+        updateDashboard();
+
+        // Render the scene
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // === Dashboard Updates ===
+
+      function updateDashboard() {
+        // Compute speed from carBody velocity (convert to km/h)
+        const speed = carBody.velocity.length();
+        const speedKmh = Math.round(speed * 3.6);
+        document.getElementById('speedometer').innerText =
+          'Speed: ' + speedKmh + ' km/h';
+
+        // Update tachometer and fuel gauge as needed
+        // Placeholder: simple static values
+        document.getElementById('tachometer').innerText = 'RPM: ' + Math.round(speedKmh * 50);
+        // Fuel gauge, engine temperature, etc., can be computed and updated here.
+      }
+
+      // === Audio (Placeholder for realistic engine sounds, tire squeals, etc.) ===
+
+      // You can use the Web Audio API to create spatial audio sources and play high-quality sounds.
+      // For example:
+      // const audioListener = new THREE.AudioListener();
+      // camera.add(audioListener);
+      // const engineSound = new THREE.Audio(audioListener);
+      // // Load sound file and set properties...
+      // engineSound.play();
+
+      // === Additional Features Placeholders ===
+
+      // - Implement advanced post-processing (bloom, ambient occlusion, anti-aliasing)
+      // - Load high-resolution glTF/FBX car models with PBR materials (using GLTFLoader)
+      // - Procedural generation for multiple environments (mountain pass, urban, coastal, etc.)
+      // - Weather systems: integrate shaders/particle systems for rain, snow, fog
+      // - Realistic AI: create additional physics-driven cars with behavior rules
+      // - Replay system and photo mode: record simulation frames and enable capturing screenshots
+      // - Use Web Workers to offload heavy physics calculations if needed
+      // - For a production project, structure code into modules and consider using TypeScript with a build system like Webpack or Parcel.
+
+      // === Handle Window Resize ===
+      window.addEventListener('resize', onWindowResize, false);
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    </script>
+  </body>
+</html>
